@@ -46,3 +46,20 @@ def get_badge(business_id):
 
 if __name__ == '__main__':
     app.run()
+from flask import Flask, request
+from twilio.twiml.messaging_response import MessagingResponse
+
+app = Flask(__name__)
+
+@app.route('/whatsapp', methods=['POST'])
+def whatsapp_reply():
+    incoming_msg = request.values.get('Body', '').lower()
+    resp = MessagingResponse()
+    msg = resp.message()
+
+    if 'status' in incoming_msg:
+        msg.body("HustleShield: Your compliance status is 2/10. Keep logging receipts!")
+    else:
+        msg.body("Welcome to HustleShield. Send 'status' to check your progress.")
+        
+    return str(resp)
