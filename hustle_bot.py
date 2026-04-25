@@ -36,7 +36,7 @@ def log_receipt():
     
     return jsonify({"error": "Business not found"}), 404
 
-@app.route('@app.route('/')
+@app.route('/')
 def home():
     return "HustleShield Compliance Engine is ACTIVE. Use /badge/biz_001 to check status."', methods=['GET'])
 def get_badge(business_id):
