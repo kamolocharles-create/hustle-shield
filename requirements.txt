@@ -1,7 +1,5 @@
 Flask==3.0.3
 requests==2.32.3
 gunicorn==22.0.0
-flask
-requests
-gunicorn
-twilio
+twilio==9.10.5
+python-dotenv==1.0.1
