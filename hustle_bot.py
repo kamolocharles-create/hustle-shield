@@ -1,17 +1,19 @@
+import os
 import requests
-import json
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
 
-# Digitax Configuration
-DIGITAX_API_URL = "https://api.digitax.tech/ke/v2/sales" # Verify this against your sandbox docs
-API_KEY = "YOUR_DIGITAX_SANDBOX_KEY" # Replace with your actual key
+# This pulls the value from the Render Environment Variables we set
+API_KEY = os.environ.get('DIGITAX_KEY')
+DIGITAX_API_URL = "https://api.digitax.tech/ke/v2/sales"
 
 def submit_to_digitax(amount):
+    if not API_KEY:
+        return {"error": "API Key is missing in environment variables!"}
+    
     headers = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
-    # Standard payload structure for Digitax SHIELD_VAT_16
     payload = {
         "invoice_kind": "B2C",
         "items": [{
@@ -21,6 +23,7 @@ def submit_to_digitax(amount):
             "tax_rate": 0.16
         }]
     }
+    
     try:
         response = requests.post(DIGITAX_API_URL, json=payload, headers=headers)
         return response.json()
@@ -38,25 +41,23 @@ def whatsapp_reply():
     msg = resp.message()
 
     if 'status' in incoming_msg:
-        msg.body("HustleShield: Your compliance status is 2/10. Keep logging those VAT receipts!")
+        msg.body("HustleShield: Your compliance status is 2/10.")
     
     elif 'log' in incoming_msg:
-        # Expected format: "log 500"
         try:
-            parts = incoming_msg.split()
-            amount = parts[1]
+            amount = incoming_msg.split()[1]
             digitax_res = submit_to_digitax(amount)
             
-            if "invoice_number" in digitax_res:
-                msg.body(f"Success! Receipt logged. ID: {digitax_res['invoice_number']}")
-            else:
-                msg.body("Error: Failed to sync with Digitax. Please check API settings.")
-        except:
-            msg.body("Format error. Send 'log [amount]' (e.g., 'log 500')")
+            # This line is crucial: It prints the error to your Render Logs tab
+            print(f"DEBUG: Digitax response: {digitax_res}")
             
-    else:
-        msg.body("Welcome to HustleShield. Send 'status' or 'log [amount]'.")
-
+            if "invoice_number" in digitax_res:
+                msg.body(f"Success! ID: {digitax_res['invoice_number']}")
+            else:
+                msg.body(f"Error: {digitax_res}")
+        except:
+            msg.body("Format error. Send 'log [amount]'")
+            
     return str(resp)
 
 if __name__ == '__main__':
