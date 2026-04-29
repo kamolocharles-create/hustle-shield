@@ -402,10 +402,11 @@ def _create_sale(invoice: dict, item_ids: list[str],
     sale_items = []
     for item, item_id in zip(invoice["items"], item_ids):
         sale_items.append({
-            "item_id":       item_id,
-            "quantity":      float(item["quantity"]),
-            "unit_price":    float(item["unit_price"]),
-            "total_amount":  float(item["total_amount"]),
+    "id":            item_id,
+    "quantity":      float(item["quantity"]),
+    "unit_price":    float(item["unit_price"]),
+    "total_amount":  float(item["total_amount"]),
+})
         })
 
     payload = {
