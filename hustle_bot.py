@@ -378,6 +378,7 @@ def _register_item(item: dict, invoice_number: int) -> str:
         "quantity_unit_code": SERVICE_QTY_UNIT if is_service else GOODS_QTY_UNIT,
         "tax_type_code":      item.get("tax_type", TAX_TYPE_DEFAULT),
         "default_unit_price": float(item["unit_price"]),
+        "is_stock_item":      False,   # No stock tracking — sell directly
     }
 
     result = _digitax_post("/items", payload)
@@ -476,9 +477,6 @@ def submit_invoice(invoice: dict) -> dict:
         item_id = _register_item(item, invoice_number)
         item_ids.append(item_id)
         logger.info("Item registered | id=%s", item_id)
-        # Add stock for physical goods (services don't need stock)
-        if item.get("item_type", "goods") == "goods":
-            _add_stock(item_id, float(item["quantity"]))
 
     # Step 2 — Create sale
     sale_id = _create_sale(invoice, item_ids, invoice_number)
