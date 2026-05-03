@@ -370,7 +370,7 @@ def _register_item(item: dict, invoice_number: int) -> str:
 
     payload = {
         "active":             True,
-        "item_class_code":    item.get("item_class_code", "5020500000"),
+        "item_class_code":    item.get("item_class_code", "80000000" if is_service else "30000000"),
         "item_type_code":     ITEM_TYPE_SERVICE if is_service else ITEM_TYPE_GOODS,
         "item_name":          item["description"],
         "origin_nation_code": "KE",
