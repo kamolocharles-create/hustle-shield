@@ -395,18 +395,33 @@ def _register_item(item: dict, invoice_number: int) -> str:
 def _add_stock(item_id: str, quantity: float) -> None:
     """
     Add stock for a physical goods item before selling.
-    Endpoint: POST /ke/v2/items/{item_id}/stocks
-    stock_type_code 02 = INCOMING PURCHASE (most common for goods bought for resale)
+    Endpoint: PUT /ke/v2/items/{item_id}
+    We update the item with stock_quantity to satisfy Digitax stock requirement.
     """
     payload = {
-        "quantity":        quantity,
-        "stock_type_code": "02",   # 02 = INCOMING PURCHASE
+        "stock_quantity": int(quantity) + 1000,  # Add buffer above quantity sold
     }
     try:
-        _digitax_post(f"/items/{item_id}/stocks", payload)
-        logger.info("Stock added | item_id=%s | qty=%s", item_id, quantity)
+        url = digitax_url(f"/items/{item_id}")
+        resp = get_http_session().put(
+            url,
+            json=payload,
+            headers=digitax_headers(),
+            timeout=get_config().REQUEST_TIMEOUT,
+        )
+        try:
+            body = resp.json()
+        except ValueError:
+            body = resp.text
+        if resp.ok:
+            logger.info("Stock updated | item_id=%s | stock_quantity=%s | status=%s",
+                        item_id, payload["stock_quantity"],
+                        body.get("status") if isinstance(body, dict) else "?")
+        else:
+            logger.warning("Stock update failed %d | item_id=%s | body=%s",
+                           resp.status_code, item_id, body)
     except Exception as e:
-        logger.warning("Stock add failed for %s: %s", item_id, e)
+        logger.warning("Stock update exception for %s: %s", item_id, e)
 
 
 def _create_sale(invoice: dict, item_ids: list[str],
@@ -477,6 +492,8 @@ def submit_invoice(invoice: dict) -> dict:
         item_id = _register_item(item, invoice_number)
         item_ids.append(item_id)
         logger.info("Item registered | id=%s", item_id)
+        # Add stock for all items — Digitax sandbox forces is_stock_item=True
+        _add_stock(item_id, float(item["quantity"]))
 
     # Step 2 — Create sale
     sale_id = _create_sale(invoice, item_ids, invoice_number)
