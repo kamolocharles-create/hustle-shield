@@ -392,14 +392,17 @@ def _register_item(item: dict, invoice_number: int) -> str:
 
 
 def _add_stock(item_id: str, quantity: float) -> None:
-    """Add stock for a physical goods item before selling."""
+    """
+    Add stock for a physical goods item before selling.
+    Endpoint: POST /ke/v2/items/{item_id}/stocks
+    stock_type_code 02 = INCOMING PURCHASE (most common for goods bought for resale)
+    """
     payload = {
-        "item_id":         item_id,
         "quantity":        quantity,
-        "stock_type_code": "01",   # 01 = Purchase / Incoming stock
+        "stock_type_code": "02",   # 02 = INCOMING PURCHASE
     }
     try:
-        _digitax_post("/stocks", payload)
+        _digitax_post(f"/items/{item_id}/stocks", payload)
         logger.info("Stock added | item_id=%s | qty=%s", item_id, quantity)
     except Exception as e:
         logger.warning("Stock add failed for %s: %s", item_id, e)
