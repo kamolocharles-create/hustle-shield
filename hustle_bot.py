@@ -414,6 +414,7 @@ def _create_sale(invoice: dict, item_ids: list[str],
         "receipt_type_code":     "S",    # S = Sale
         "payment_type_code":     "06",   # 06 = Mobile Money (most common in KE)
         "invoice_status_code":   "01",   # 01 = Wait for Approval
+        "sale_date":             datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "customer_pin":          invoice.get("customer_pin", ""),
         "customer_name":         invoice.get("customer_name", ""),
         "items":                 sale_items,
