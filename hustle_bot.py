@@ -275,7 +275,7 @@ def probe_dns(hostname, timeout=5.0):
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Item type mapping based on user's selection
-ITEM_TYPE_GOODS   = "2"   # Finished Product
+ITEM_TYPE_GOODS   = "1"   # Raw Material (no stock tracking required by Digitax)
 ITEM_TYPE_SERVICE = "3"   # Service (no stock)
 
 # Tax type defaults
