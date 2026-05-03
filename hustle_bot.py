@@ -391,6 +391,20 @@ def _register_item(item: dict, invoice_number: int) -> str:
     return str(item_id)
 
 
+def _add_stock(item_id: str, quantity: float) -> None:
+    """Add stock for a physical goods item before selling."""
+    payload = {
+        "item_id":         item_id,
+        "quantity":        quantity,
+        "stock_type_code": "01",   # 01 = Purchase / Incoming stock
+    }
+    try:
+        _digitax_post("/stocks", payload)
+        logger.info("Stock added | item_id=%s | qty=%s", item_id, quantity)
+    except Exception as e:
+        logger.warning("Stock add failed for %s: %s", item_id, e)
+
+
 def _create_sale(invoice: dict, item_ids: list[str],
                  invoice_number: int) -> str:
     """
@@ -459,6 +473,9 @@ def submit_invoice(invoice: dict) -> dict:
         item_id = _register_item(item, invoice_number)
         item_ids.append(item_id)
         logger.info("Item registered | id=%s", item_id)
+        # Add stock for physical goods (services don't need stock)
+        if item.get("item_type", "goods") == "goods":
+            _add_stock(item_id, float(item["quantity"]))
 
     # Step 2 — Create sale
     sale_id = _create_sale(invoice, item_ids, invoice_number)
