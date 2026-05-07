@@ -366,19 +366,22 @@ def _register_item(item: dict, invoice_number: int) -> str:
       item_type  ("goods" or "service"),
       tax_type   ("D" non-vat | "B" 16%vat | "A" exempt | "C" 0%)
     """
-    is_service = item.get("item_type", "goods") == "service"
+    # NOTE: Digitax sandbox forces is_stock_item=True for goods items (type 1 & 2)
+    # and requires stock before selling. Until Digitax confirms the stock endpoint,
+    # we register ALL items as services (type 3) which never require stock.
+    # This allows full end-to-end testing. Goods handling restored once confirmed.
+    is_service = True   # Temporary: treat all as services to bypass stock requirement
 
     payload = {
         "active":             True,
-        "item_class_code":    item.get("item_class_code", "80000000" if is_service else "30000000"),
-        "item_type_code":     ITEM_TYPE_SERVICE if is_service else ITEM_TYPE_GOODS,
+        "item_class_code":    "80000000",   # Services classification
+        "item_type_code":     ITEM_TYPE_SERVICE,
         "item_name":          item["description"],
         "origin_nation_code": "KE",
-        "package_unit_code":  SERVICE_PKG_UNIT if is_service else GOODS_PKG_UNIT,
-        "quantity_unit_code": SERVICE_QTY_UNIT if is_service else GOODS_QTY_UNIT,
+        "package_unit_code":  SERVICE_PKG_UNIT,
+        "quantity_unit_code": SERVICE_QTY_UNIT,
         "tax_type_code":      item.get("tax_type", TAX_TYPE_DEFAULT),
         "default_unit_price": float(item["unit_price"]),
-        "is_stock_item":      False,   # No stock tracking — sell directly
     }
 
     result = _digitax_post("/items", payload)
