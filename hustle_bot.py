@@ -366,20 +366,16 @@ def _register_item(item: dict, invoice_number: int) -> str:
       item_type  ("goods" or "service"),
       tax_type   ("D" non-vat | "B" 16%vat | "A" exempt | "C" 0%)
     """
-    # NOTE: Digitax sandbox forces is_stock_item=True for goods items (type 1 & 2)
-    # and requires stock before selling. Until Digitax confirms the stock endpoint,
-    # we register ALL items as services (type 3) which never require stock.
-    # This allows full end-to-end testing. Goods handling restored once confirmed.
-    is_service = True   # Temporary: treat all as services to bypass stock requirement
+    is_service = item.get("item_type", "goods") == "service"
 
     payload = {
         "active":             True,
-        "item_class_code":    "80000000",   # Services classification
-        "item_type_code":     ITEM_TYPE_SERVICE,
+        "item_class_code":    item.get("item_class_code", "80000000" if is_service else "30000000"),
+        "item_type_code":     ITEM_TYPE_SERVICE if is_service else ITEM_TYPE_GOODS,
         "item_name":          item["description"],
         "origin_nation_code": "KE",
-        "package_unit_code":  SERVICE_PKG_UNIT,
-        "quantity_unit_code": SERVICE_QTY_UNIT,
+        "package_unit_code":  SERVICE_PKG_UNIT if is_service else GOODS_PKG_UNIT,
+        "quantity_unit_code": SERVICE_QTY_UNIT if is_service else GOODS_QTY_UNIT,
         "tax_type_code":      item.get("tax_type", TAX_TYPE_DEFAULT),
         "default_unit_price": float(item["unit_price"]),
     }
@@ -398,14 +394,18 @@ def _register_item(item: dict, invoice_number: int) -> str:
 def _add_stock(item_id: str, quantity: float) -> None:
     """
     Add stock for a physical goods item before selling.
-    Endpoint: PUT /ke/v2/items/{item_id}
-    We update the item with stock_quantity to satisfy Digitax stock requirement.
+    Correct endpoint: PUT /ke/v2/stock/adjust
+    action: ADD
+    movement_type: 02 = INCOMING PURCHASE
     """
     payload = {
-        "stock_quantity": int(quantity) + 1000,  # Add buffer above quantity sold
+        "item_id":       item_id,
+        "quantity":      int(quantity) + 1000,  # Add buffer well above quantity sold
+        "action":        "ADD",
+        "movement_type": "02",   # 02 = INCOMING PURCHASE
     }
     try:
-        url = digitax_url(f"/items/{item_id}")
+        url = digitax_url("/stock/adjust")
         resp = get_http_session().put(
             url,
             json=payload,
@@ -417,14 +417,17 @@ def _add_stock(item_id: str, quantity: float) -> None:
         except ValueError:
             body = resp.text
         if resp.ok:
-            logger.info("Stock updated | item_id=%s | stock_quantity=%s | status=%s",
-                        item_id, payload["stock_quantity"],
-                        body.get("status") if isinstance(body, dict) else "?")
+            logger.info("Stock added | item_id=%s | qty=%s | resp=%s",
+                        item_id, payload["quantity"], body)
         else:
-            logger.warning("Stock update failed %d | item_id=%s | body=%s",
-                           resp.status_code, item_id, body)
+            logger.error("Stock adjust failed %d | item_id=%s | payload=%s | body=%s",
+                         resp.status_code, item_id, payload, body)
+            raise RuntimeError(f"Stock adjust failed (HTTP {resp.status_code}): {body}")
+    except RuntimeError:
+        raise
     except Exception as e:
-        logger.warning("Stock update exception for %s: %s", item_id, e)
+        logger.error("Stock adjust exception for %s: %s", item_id, e)
+        raise RuntimeError(f"Stock adjust error: {e}") from e
 
 
 def _create_sale(invoice: dict, item_ids: list[str],
@@ -495,8 +498,9 @@ def submit_invoice(invoice: dict) -> dict:
         item_id = _register_item(item, invoice_number)
         item_ids.append(item_id)
         logger.info("Item registered | id=%s", item_id)
-        # Add stock for all items — Digitax sandbox forces is_stock_item=True
-        _add_stock(item_id, float(item["quantity"]))
+        # Add stock only for physical goods (services don't require stock)
+        if item.get("item_type", "goods") == "goods":
+            _add_stock(item_id, float(item["quantity"]))
 
     # Step 2 — Create sale
     sale_id = _create_sale(invoice, item_ids, invoice_number)
