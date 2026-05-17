@@ -18,7 +18,7 @@ import socket
 import sqlite3
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http import HTTPStatus
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -666,8 +666,8 @@ def generate_invoice_pdf(invoice, ref, cuin):
     value_style  = ParagraphStyle("value", parent=styles["Normal"], fontSize=9)
     footer_style = ParagraphStyle("footer", parent=styles["Normal"], fontSize=8,
                                    textColor=colors.grey, alignment=1)
-    submitted_at = invoice.get("submitted_at",
-                                datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC"))
+    eat = timezone(timedelta(hours=3))
+    submitted_at = invoice.get("submitted_at", datetime.now(eat).strftime("%d %b %Y %H:%M EAT"))
     story = []
     story.append(Paragraph("HustleShield", title_style))
     story.append(Paragraph("KRA eTIMS-Compliant Tax Invoice", sub_style))
@@ -1067,7 +1067,8 @@ def _handle_submission(sender, state, invoice):
         cuin_line = f"\n🔐 *CUIN:* {cuin}" if cuin else ""
         save_invoice(sender, invoice, ref, cuin, lang)
         deduct_invoice_fee(sender)
-        invoice["submitted_at"] = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+        eat = timezone(timedelta(hours=3))
+        invoice["submitted_at"] = datetime.now(eat).strftime("%d %b %Y %H:%M EAT")
         try:
             pdf_bytes = generate_invoice_pdf(invoice, ref, cuin)
             send_pdf_receipt(sender, pdf_bytes, ref, t(lang,"pdf_caption", ref=ref))
