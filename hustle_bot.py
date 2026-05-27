@@ -160,36 +160,46 @@ def _register_item(item: dict, business_id: str) -> tuple[bool, dict]:
 
 
 def submit_invoice_to_digitax(invoice: dict, items: list, business_id: str) -> tuple[bool, dict]:
-    """Full invoice submission: register items then post sale."""
+    """Full invoice submission using /sales-with-items endpoint."""
+    import datetime
     line_items = []
     for item in items:
         ok, resp = _register_item(item, business_id)
         if not ok:
             return False, {"error": f"Item registration failed: {resp}"}
-        qty   = float(item["quantity"])
-        price = float(item["unit_price"])
+        qty        = float(item["quantity"])
+        price      = float(item["unit_price"])
+        total      = round(qty * price, 2)
+        is_service = item.get("type", "goods").lower() == "service"
         line_items.append({
-            "id":              resp.get("id", uuid.uuid4().hex[:8]),
-            "item_name":       item["description"],
-            "quantity":        qty,
-            "unit_price":      price,
-            "total_amount":    round(qty * price, 2),
-            "tax_type_code":   item.get("tax_type_code", "B"),
-            "discount_rate":   0,
-            "discount_amount": 0,
+            "id":                  resp.get("id", uuid.uuid4().hex[:8]),
+            "item_name":           item["description"],
+            "item_class_code":     resp.get("item_class_code", "80000000" if is_service else "30000000"),
+            "item_bar_code":       resp.get("etims_item_code", resp.get("id", "N/A")),
+            "item_tax_type_code":  "B",
+            "quantity":            qty,
+            "unit_price":          price,
+            "total_amount":        total,
+            "taxable_amount":      round(total / 1.16, 2),
+            "tax_amount":          round(total - total / 1.16, 2),
+            "discount_rate":       0,
+            "discount_amount":     0,
+            "is_stockable":        not is_service,
         })
 
-    total = round(sum(i["total_amount"] for i in line_items), 2)
+    today = datetime.date.today().isoformat()
+    trader_inv = f"HS{uuid.uuid4().hex[:8].upper()}"
     payload = {
-        "business_id":     business_id,
-        "customer_pin":    invoice.get("customer_pin", "A000000000Z"),
-        "customer_name":   invoice.get("customer_name", "Retail Customer"),
-        "invoice_type":    "S",
-        "payment_method":  invoice.get("payment_method", "01"),
-        "total_amount":    total,
-        "items":           line_items,
+        "sale_date":             today,
+        "trader_invoice_number": trader_inv,
+        "receipt_type_code":     "S",
+        "payment_type_code":     "07",
+        "invoice_status_code":   "01",
+        "customer_tin":          invoice.get("customer_pin", ""),
+        "customer_name":         invoice.get("customer_name", "Retail Customer"),
+        "items":                 line_items,
     }
-    return digitax_post("/sales", payload)
+    return digitax_post("/sales-with-items", payload)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
