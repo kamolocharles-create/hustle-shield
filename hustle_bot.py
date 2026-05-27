@@ -199,7 +199,7 @@ def create_client_profile(data: dict) -> tuple[bool, str, str]:
     """
     ok, resp = digitax_post("/customers", {
         "customer_name": data["business_name"],
-        "customer_tin":  data["kra_pin"].upper(),
+        "customer_pin":  data["kra_pin"].upper(),
         "email":         data.get("email", ""),
         "phone":         data.get("phone", ""),
     })
