@@ -117,19 +117,15 @@ DIGITAX_HEADERS = lambda: {
 def digitax_post(endpoint: str, payload: dict) -> tuple[bool, dict]:
     """POST to DigiTax API. Returns (success, response_dict)."""
     if SANDBOX_MODE:
-        # Simulate response in sandbox
         logger.info("[SANDBOX] POST %s payload=%s", endpoint, payload)
-        if endpoint == "/businesses":
+        if endpoint == "/customers":
             return True, {
-                "id": "biz_" + uuid.uuid4().hex[:10],
-                "name": payload.get("name"),
-                "tpin": payload.get("tpin"),
-                "status": "TEST",
-            }
-        if endpoint == "/integrations/keys":
-            return True, {
-                "api_key": "dgtx_sandbox_" + uuid.uuid4().hex[:20] + "_ke",
-                "business_id": payload.get("business_id"),
+                "id": "customer_" + uuid.uuid4().hex[:10],
+                "customer_name": payload.get("customer_name"),
+                "customer_tin":  payload.get("customer_tin"),
+                "email":         payload.get("email", ""),
+                "phone":         payload.get("phone", ""),
+                "taxpayer_type": "BUSINESS",
             }
         return False, {"error": "Unknown sandbox endpoint"}
 
@@ -198,37 +194,22 @@ def submit_invoice_to_digitax(invoice: dict, items: list, business_id: str) -> t
 # ─────────────────────────────────────────────────────────────────────────────
 def create_client_profile(data: dict) -> tuple[bool, str, str]:
     """
-    Creates a DigiTax business profile for a client under Hustle Shield.
-    Returns (success, business_id_or_error, token_or_empty).
+    Saves client as a customer under Hustle Shield DigiTax account via /customers.
+    Returns (success, customer_id_or_error, kra_pin).
     """
-    # Step A: Create the business
-    ok, resp = digitax_post("/businesses", {
-        "name":             data["business_name"],
-        "tpin":             data["kra_pin"].upper(),
-        "email":            data.get("email", ""),
-        "phone":            data.get("phone", ""),
-        "parent_account":   DIGITAX_BIZ_ID,
-        "mode":             "TEST" if SANDBOX_MODE else "LIVE",
+    ok, resp = digitax_post("/customers", {
+        "customer_name": data["business_name"],
+        "customer_tin":  data["kra_pin"].upper(),
+        "email":         data.get("email", ""),
+        "phone":         data.get("phone", ""),
     })
     if not ok:
         err = resp.get("error") or resp.get("message") or str(resp)
         return False, err, ""
 
-    biz_id = resp.get("id", "")
-    logger.info("Client business created | id=%s | name=%s", biz_id, data["business_name"])
-
-    # Step B: Generate integration token
-    ok2, resp2 = digitax_post("/integrations/keys", {
-        "business_id": biz_id,
-        "label":       f"{data['business_name']} – HustleShield Auto",
-    })
-    if not ok2:
-        err = resp2.get("error") or str(resp2)
-        return False, err, ""
-
-    token = resp2.get("api_key", "")
-    logger.info("Token issued | biz_id=%s | token_prefix=%s", biz_id, token[:20])
-    return True, biz_id, token
+    customer_id = resp.get("id", "")
+    logger.info("Customer saved | id=%s | name=%s", customer_id, data["business_name"])
+    return True, customer_id, data["kra_pin"].upper()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -496,17 +477,17 @@ def _do_create_profile(phone: str, s: dict) -> str:
     reset(phone)
 
     if ok:
-        mode_note = "🟡 *SANDBOX MODE* — swap to production key when ready\n\n" if SANDBOX_MODE else ""
+        mode_note = "🟡 *SANDBOX MODE*\n\n" if SANDBOX_MODE else ""
         return (
-            f"🎉 *Profile Created Successfully!*\n\n"
+            f"✅ *Client Registered Successfully!*\n\n"
             f"{mode_note}"
-            f"🏢 {d['business_name']}\n"
+            f"🏢 *{d['business_name']}* is now saved under your DigiTax account\n"
             f"📛 KRA PIN: {d['kra_pin']}\n"
-            f"🆔 DigiTax Business ID: `{biz_id_or_err}`\n\n"
-            f"🔑 *Integration Token:*\n"
-            f"`{token}`\n\n"
-            f"📌 Send this token to your client. They use it to complete eTIMS onboarding at _digitax.tech_\n\n"
-            f"_Powered by Hustle Shield Technologies_"
+            f"🆔 Customer ID: `{biz_id_or_err}`\n\n"
+            f"📌 *Next step:* Share the DigiTax onboarding link with your client so they complete their eTIMS setup:\n"
+            f"👉 _digitax.tech_\n\n"
+            f"You can now raise eTIMS invoices for this client. Reply *1* to send an invoice.\n\n"
+            f"_Hustle Shield Technologies_"
         )
     return (
         f"❌ *Profile creation failed*\n\n"
