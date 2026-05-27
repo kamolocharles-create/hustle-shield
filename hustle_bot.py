@@ -145,14 +145,16 @@ def _register_item(item: dict, business_id: str) -> tuple[bool, dict]:
     """Register a single line item with DigiTax."""
     is_service = item.get("type", "goods").lower() == "service"
     payload = {
-        "business_id":      business_id,
-        "item_name":        item["description"],
-        "item_code":        item.get("code", f"HS{uuid.uuid4().hex[:6].upper()}"),
-        "unit_price":       float(item["unit_price"]),
-        "item_class_code":  item.get("item_class_code", "80000000" if is_service else "30000000"),
-        "packaging_unit":   item.get("packaging_unit", "NT"),
-        "quantity_unit":    item.get("quantity_unit", "NO"),
-        "tax_type":         item.get("tax_type", "B"),
+        "active":               True,
+        "item_class_code":      item.get("item_class_code", "80000000" if is_service else "30000000"),
+        "item_type_code":       "3" if is_service else "1",
+        "item_name":            item["description"],
+        "item_code":            item.get("code", f"HS{uuid.uuid4().hex[:6].upper()}"),
+        "default_unit_price":   float(item["unit_price"]),
+        "package_unit_code":    "NT" if is_service else "CT",
+        "quantity_unit_code":   "U",
+        "tax_type_code":        item.get("tax_type_code", "B"),
+        "origin_nation_code":   "KE",
     }
     return digitax_post("/items", payload)
 
