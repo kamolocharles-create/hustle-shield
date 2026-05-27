@@ -169,13 +169,14 @@ def submit_invoice_to_digitax(invoice: dict, items: list, business_id: str) -> t
         qty   = float(item["quantity"])
         price = float(item["unit_price"])
         line_items.append({
-            "id":           resp.get("id", uuid.uuid4().hex[:8]),
-            "item_name":    item["description"],
-            "quantity":     qty,
-            "unit_price":   price,
-            "total_amount": round(qty * price, 2),
-            "tax_type":     item.get("tax_type", "B"),
-            "discount":     0,
+            "id":              resp.get("id", uuid.uuid4().hex[:8]),
+            "item_name":       item["description"],
+            "quantity":        qty,
+            "unit_price":      price,
+            "total_amount":    round(qty * price, 2),
+            "tax_type_code":   item.get("tax_type_code", "B"),
+            "discount_rate":   0,
+            "discount_amount": 0,
         })
 
     total = round(sum(i["total_amount"] for i in line_items), 2)
