@@ -896,16 +896,25 @@ def handle_message(sender: str, text: str, profile: str = "") -> str:
     if tl.startswith("quick ") or tl.startswith("haraka "):
         return _handle_quick(sender, t, state)
 
-    # ── Subscribe / payment ───────────────────────────────────────────────
-    if tl in ("subscribe", "jiandikishe", "topup", "ongeza"):
-        state["step"] = "sub_menu"
-        save_session(sender, state)
-        return T(lang, "sub_menu")
+    # ── Active invoice flow takes priority over everything ───────────────
+    if state.get("step", "").startswith("inv_"):
+        return _handle_invoice(sender, text, state)
 
+    # ── Active onboarding flow takes priority ─────────────────────────────
+    if state.get("step", "").startswith("ob_"):
+        return _handle_onboard(sender, text, state)
+
+    # ── Sub menu selection (only when in sub_menu state) ─────────────────
     if state.get("step") == "sub_menu" and tl in ("1","2","3","4","5"):
         state["step"] = "menu"
         save_session(sender, state)
         return initiate_payment(sender, tl, lang)
+
+    # ── Subscribe / payment ───────────────────────────────────────────────
+    if tl in ("subscribe", "jiandikishe", "topup", "ongeza", "wallet top up", "wallet topup", "top up", "pay", "plans"):
+        state["step"] = "sub_menu"
+        save_session(sender, state)
+        return T(lang, "sub_menu")
 
     # ── Balance ───────────────────────────────────────────────────────────
     if tl in ("balance", "salio"):
@@ -933,7 +942,7 @@ def handle_message(sender: str, text: str, profile: str = "") -> str:
         return T(lang, "help")
 
     # ── Onboarding flow ───────────────────────────────────────────────────
-    if state["step"].startswith("ob_") or tl in ("2", "register", "sajili", "onboard"):
+    if state["step"].startswith("ob_") or tl in ("2", "sajili", "onboard") or tl.startswith("register ") or tl == "register":
         return _handle_onboard(sender, t, state)
 
     # ── Invoice flow ──────────────────────────────────────────────────────
@@ -949,7 +958,7 @@ def _handle_invoice(sender: str, text: str, state: dict) -> str:
     t    = text.strip()
     step = state.get("step", "menu")
 
-    if step in ("menu", "idle") or t.lower() in ("1", "invoice", "ankara", "new invoice", "tuma ankara"):
+    if step in ("menu", "idle"):
         state["step"]          = "inv_pin"
         state["customer_pin"]  = None
         state["customer_name"] = None
@@ -1066,11 +1075,35 @@ def _handle_onboard(sender: str, text: str, state: dict) -> str:
     step = state.get("step", "menu")
     d    = state.get("data", {})
 
-    if step in ("menu", "idle") or t.lower() in ("2", "register", "sajili", "onboard"):
+    if step in ("menu", "idle") or t.lower() in ("2", "sajili", "onboard") or t.lower().startswith("register"):
+        # Check if all details provided in one message: register <PIN> <name> | <email> | <phone>
+        # Strip command word before parsing
+        raw = re.sub(r"^(register|sajili)\s+", "", t, flags=re.IGNORECASE)
+        parts = raw.split("|")
+        if len(parts) >= 3:
+            header = parts[0].strip().split(None, 1)
+            # header[0] = PIN, header[1] = business name
+            if len(header) >= 2 and valid_pin(header[0]):
+                # One-shot registration
+                d = {
+                    "business_name": header[1].strip(),
+                    "kra_pin":       header[0].strip().upper(),
+                    "email":         parts[1].strip(),
+                    "phone":         parts[2].strip(),
+                }
+                state["data"] = d
+                state["step"] = "ob_confirm"
+                save_session(sender, state)
+                return T(lang, "ob_confirm", name=d["business_name"], pin=d["kra_pin"],
+                         email=d["email"], phone=d["phone"])
         state["step"] = "ob_name"
         state["data"] = {}
         save_session(sender, state)
-        return T(lang, "ob_start")
+        if lang == "en":
+            hint = "\n\n_Tip: Send all at once:_ `register <PIN> <name> | <email> | <phone>`"
+        else:
+            hint = "\n\n_Kidokezo: Tuma yote:_ `sajili <PIN> <jina> | <barua> | <simu>`"
+        return T(lang, "ob_start") + hint
 
     if step == "ob_name":
         if len(t) < 2:
