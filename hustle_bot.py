@@ -497,14 +497,30 @@ def register_customer(data: dict) -> tuple:
         "email":         data.get("email", ""),
         "phone":         data.get("phone", ""),
     }
+    # /customers uses X-API-Key header (confirmed from DigiTax docs)
+    headers = {
+        "X-API-Key":     DIGITAX_KEY,
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
+    }
+    url = DIGITAX_BASE_URL + "/customers"
     logger.info("→ Digitax POST /customers | name=%s pin=%s",
                 data["business_name"], data["kra_pin"])
     try:
-        result = _digitax_post("/customers", payload)
-        cid    = result.get("id", "N/A")
-        logger.info("Customer registered | id=%s", cid)
-        return True, cid, data["business_name"]
-    except RuntimeError as e:
+        resp = get_http_session().post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT)
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {"raw": resp.text}
+        logger.info("✓ Digitax POST /customers → %d | %s", resp.status_code, str(body)[:300])
+        if resp.status_code in (200, 201):
+            cid = body.get("id", "N/A")
+            logger.info("Customer registered | id=%s", cid)
+            return True, cid, data["business_name"]
+        msg = (body.get("error_message") or body.get("message") or
+               body.get("error") or str(body) if isinstance(body, dict) else str(body))
+        return False, msg, ""
+    except Exception as e:
         return False, str(e), ""
 
 # ─────────────────────────────────────────────────────────────────────────────
