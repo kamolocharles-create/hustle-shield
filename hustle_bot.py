@@ -493,11 +493,11 @@ def register_customer(data: dict) -> tuple:
     """Register a client under Hustle Shield's DigiTax account."""
     payload = {
         "customer_name": data["business_name"],
-        "customer_pin":  data["kra_pin"].upper(),
+        "customer_tin":  data["kra_pin"].upper(),
         "email":         data.get("email", ""),
         "phone":         data.get("phone", ""),
     }
-    # /customers uses X-API-Key header (confirmed from DigiTax docs)
+    # /customers uses X-API-Key header + customer_tin field (confirmed from official DigiTax spec)
     headers = {
         "X-API-Key":     DIGITAX_KEY,
         "Content-Type":  "application/json",
