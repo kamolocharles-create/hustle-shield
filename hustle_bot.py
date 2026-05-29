@@ -100,10 +100,13 @@ MPESA_SECRET     = os.environ.get("MPESA_CONSUMER_SECRET", "")
 MPESA_SHORTCODE  = os.environ.get("MPESA_SHORTCODE", "174379")
 MPESA_PASSKEY    = os.environ.get("MPESA_PASSKEY", "")
 MPESA_ENV        = os.environ.get("MPESA_ENV", "sandbox")
+BUSINESS_PIN     = os.environ.get("BUSINESS_PIN", "")       # Hustle Shield's KRA PIN
+BUSINESS_NAME    = os.environ.get("BUSINESS_NAME", "Hustle Shield Technologies")
 REQUEST_TIMEOUT  = 30
 
-# Staff numbers — bypass subscription gate
+# Staff numbers — bypass subscription gate + receive client notifications
 STAFF_NUMBERS = {"+254741148286"}
+TEAM_NUMBERS  = os.environ.get("TEAM_NUMBERS", "+254741148286").split(",")  # Notified on new client
 
 # DigiTax item constants
 ITEM_TYPE_GOODS   = "1"
@@ -171,6 +174,15 @@ def init_db():
                 status               TEXT DEFAULT 'pending',
                 created_at           TEXT,
                 updated_at           TEXT
+            );
+            CREATE TABLE IF NOT EXISTS clients (
+                phone           TEXT PRIMARY KEY,
+                business_name   TEXT NOT NULL,
+                kra_pin         TEXT NOT NULL,
+                digitax_api_key TEXT,
+                status          TEXT DEFAULT 'pending',
+                created_at      TEXT NOT NULL,
+                activated_at    TEXT
             );
         """)
     logger.info("DB ready at %s", DB_PATH)
@@ -262,6 +274,86 @@ def get_recent_customers(sender: str) -> list:
         return [dict(r) for r in rows]
     except Exception as e:
         logger.error("get_recent_customers: %s", e); return []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLIENT MANAGEMENT (multi-client system)
+# ─────────────────────────────────────────────────────────────────────────────
+def get_client(phone: str) -> dict | None:
+    """Get client record by phone number."""
+    try:
+        with get_db() as conn:
+            row = conn.execute("SELECT * FROM clients WHERE phone=?", (phone,)).fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        logger.error("get_client: %s", e); return None
+
+def save_client(phone: str, business_name: str, kra_pin: str) -> bool:
+    """Save new client as pending (no API key yet)."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with get_db() as conn:
+            conn.execute("""
+                INSERT INTO clients (phone, business_name, kra_pin, status, created_at)
+                VALUES (?, ?, ?, 'pending', ?)
+                ON CONFLICT(phone) DO UPDATE SET
+                    business_name=excluded.business_name,
+                    kra_pin=excluded.kra_pin,
+                    status='pending',
+                    created_at=excluded.created_at
+            """, (phone, business_name, kra_pin, now))
+        return True
+    except Exception as e:
+        logger.error("save_client: %s", e); return False
+
+def activate_client(phone: str, api_key: str) -> bool:
+    """Store client's DigiTax API key and mark them active."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with get_db() as conn:
+            result = conn.execute("""
+                UPDATE clients SET digitax_api_key=?, status='active', activated_at=?
+                WHERE phone=?
+            """, (api_key, now, phone))
+        return result.rowcount > 0
+    except Exception as e:
+        logger.error("activate_client: %s", e); return False
+
+def get_client_api_key(sender: str) -> str:
+    """
+    Get the DigiTax API key for this sender.
+    - Staff/unregistered clients: use Hustle Shield's master key (DIGITAX_KEY)
+    - Registered active clients: use their own key
+    """
+    if sender in STAFF_NUMBERS:
+        return DIGITAX_KEY
+    client = get_client(sender)
+    if client and client.get("status") == "active" and client.get("digitax_api_key"):
+        return client["digitax_api_key"]
+    return DIGITAX_KEY  # Fallback to master key
+
+def notify_team_new_client(client_phone: str, business_name: str, kra_pin: str):
+    """Send notification to all team numbers about a new client ready to activate."""
+    lines = [
+        "New HustleShield Client Ready",
+        "",
+        "Business: " + business_name,
+        "KRA PIN: " + kra_pin,
+        "Phone: " + client_phone,
+        "",
+        "Action required:",
+        "1. Go to DigiTax dashboard",
+        "2. Create business for this client",
+        "3. Generate their API key",
+        "4. Send this command to the bot:",
+        "",
+        "addclient " + client_phone + " THEIR_API_KEY",
+    ]
+    msg = "\n".join(lines)
+    for number in TEAM_NUMBERS:
+        number = number.strip()
+        if number:
+            send_text(number, msg)
+            logger.info("Team notified | to=%s | client=%s", number, client_phone)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # USER / BILLING
@@ -388,13 +480,13 @@ def valid_email(e: str) -> bool: return bool(EMAIL_RE.match(e.strip()))
 # ─────────────────────────────────────────────────────────────────────────────
 # DIGITAX — ALL ENDPOINTS USE X-API-Key
 # ─────────────────────────────────────────────────────────────────────────────
-def _dx_headers() -> dict:
-    return {"X-API-Key": DIGITAX_KEY, "Content-Type": "application/json", "Accept": "application/json"}
+def _dx_headers(api_key: str = "") -> dict:
+    return {"X-API-Key": api_key or DIGITAX_KEY, "Content-Type": "application/json", "Accept": "application/json"}
 
-def _dx_post(path: str, payload: dict) -> dict:
+def _dx_post(path: str, payload: dict, api_key: str = "") -> dict:
     url = DIGITAX_BASE_URL + path
     logger.info("→ DigiTax POST %s", url)
-    resp = get_http_session().post(url, json=payload, headers=_dx_headers(), timeout=REQUEST_TIMEOUT)
+    resp = get_http_session().post(url, json=payload, headers=_dx_headers(api_key), timeout=REQUEST_TIMEOUT)
     try:    body = resp.json()
     except: body = {"raw": resp.text}
     logger.info("✓ DigiTax %s → %d | %s", path, resp.status_code, str(body)[:400])
@@ -404,9 +496,9 @@ def _dx_post(path: str, payload: dict) -> dict:
         raise RuntimeError(f"Digitax error (HTTP {resp.status_code}): {msg}")
     return body
 
-def _dx_get(path: str) -> dict:
+def _dx_get(path: str, api_key: str = "") -> dict:
     url = DIGITAX_BASE_URL + path
-    resp = get_http_session().get(url, headers=_dx_headers(), timeout=REQUEST_TIMEOUT)
+    resp = get_http_session().get(url, headers=_dx_headers(api_key), timeout=REQUEST_TIMEOUT)
     try:    body = resp.json()
     except: body = {"raw": resp.text}
     if not resp.ok:
@@ -416,7 +508,7 @@ def _dx_get(path: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # DIGITAX — INVOICE (3-step with 2 retries)
 # ─────────────────────────────────────────────────────────────────────────────
-def _register_item(item: dict) -> str:
+def _register_item(item: dict, api_key: str = "") -> str:
     is_service = item.get("item_type", "goods") == "service"
     payload = {
         "active":             True,
@@ -429,12 +521,12 @@ def _register_item(item: dict) -> str:
         "tax_type_code":      TAX_TYPE_DEFAULT,
         "default_unit_price": float(item["unit_price"]),
     }
-    result  = _dx_post("/items", payload)
+    result  = _dx_post("/items", payload, api_key)
     item_id = result.get("id") or result.get("item_id")
     if not item_id: raise RuntimeError(f"No item_id returned: {result}")
     return str(item_id)
 
-def _create_sale(invoice: dict, item_ids: list) -> str:
+def _create_sale(invoice: dict, item_ids: list, api_key: str = "") -> str:
     inv_num    = int(time.time()) % 1000000000
     sale_items = [
         {
@@ -460,21 +552,23 @@ def _create_sale(invoice: dict, item_ids: list) -> str:
     pin = invoice.get("customer_pin", "")
     if pin and pin != "A000000000Z":
         payload["customer_tin"] = pin
-    result  = _dx_post("/sales", payload)
+    result  = _dx_post("/sales", payload, api_key)
     sale_id = result.get("id") or result.get("sale_id")
     if not sale_id: raise RuntimeError(f"No sale_id returned: {result}")
     return str(sale_id)
 
-def _get_sale(sale_id: str) -> dict:
-    return _dx_get(f"/sales/{sale_id}")
+def _get_sale(sale_id: str, api_key: str = "") -> dict:
+    return _dx_get(f"/sales/{sale_id}", api_key)
 
 def submit_invoice_with_retry(invoice: dict, send_fn, sender: str, lang: str) -> dict:
     """
     3-step DigiTax submission with 2 retries.
-    send_fn is used to send retry warnings to the user.
+    Uses client's own DigiTax API key if registered, else Hustle Shield master key.
     """
     MAX_TRIES = 3
     last_err  = None
+    api_key   = get_client_api_key(sender)
+    logger.info("Using API key for sender=%s | client_key=%s", sender, "own" if api_key != DIGITAX_KEY else "master")
 
     for attempt in range(1, MAX_TRIES + 1):
         try:
@@ -484,18 +578,18 @@ def submit_invoice_with_retry(invoice: dict, send_fn, sender: str, lang: str) ->
             # Step 1: Register items
             item_ids = []
             for item in invoice["items"]:
-                item_id = _register_item(item)
+                item_id = _register_item(item, api_key)
                 item_ids.append(item_id)
 
             # Step 2: Create sale
-            sale_id = _create_sale(invoice, item_ids)
+            sale_id = _create_sale(invoice, item_ids, api_key)
 
             # Step 3: Fetch signed invoice (KRA signing takes a moment)
             sale_data = {}
             for _ in range(3):
                 time.sleep(2)
                 try:
-                    sale_data = _get_sale(sale_id)
+                    sale_data = _get_sale(sale_id, api_key)
                     if sale_data: break
                 except Exception: pass
 
@@ -546,12 +640,17 @@ def generate_pdf(invoice: dict, ref: str, cuin: str) -> bytes:
         Paragraph("KRA eTIMS Tax Invoice · Hustle Shield Technologies", ss),
         Spacer(1, 12),
     ]
+    # Determine seller — use client's details if registered, else Hustle Shield
+    seller_name = invoice.get("seller_name") or BUSINESS_NAME
+    seller_pin  = invoice.get("seller_pin")  or BUSINESS_PIN or "—"
     meta = [
         ["Invoice Ref:", str(ref)],
         ["CUIN:", str(cuin) or "Pending"],
-        ["Customer:", invoice.get("customer_name","—")],
-        ["KRA PIN:", invoice.get("customer_pin","—")],
         ["Date:", datetime.now(tz=timezone.utc).strftime("%d %b %Y %H:%M EAT")],
+        ["Seller:", seller_name],
+        ["Seller KRA PIN:", seller_pin],
+        ["Buyer:", invoice.get("customer_name","—")],
+        ["Buyer KRA PIN:", invoice.get("customer_pin","—") if invoice.get("customer_pin","") != "A000000000Z" else "Retail Customer"],
     ]
     mt = Table(meta, colWidths=[120, 350])
     mt.setStyle(TableStyle([
@@ -694,10 +793,14 @@ def initiate_payment(sender, choice, lang) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 def _do_submit(sender: str, state: dict) -> str:
     lang  = state.get("lang","en")
+    # Get client details to set as seller on invoice
+    client = get_client(sender)
     invoice = {
         "customer_pin":  state.get("customer_pin","A000000000Z"),
         "customer_name": state.get("customer_name","Retail Customer"),
         "items":         state.get("items",[]),
+        "seller_name":   client["business_name"] if client and client.get("status") == "active" else BUSINESS_NAME,
+        "seller_pin":    client["kra_pin"] if client and client.get("status") == "active" else (BUSINESS_PIN or ""),
     }
     total = round(sum(float(i["quantity"])*float(i["unit_price"]) for i in invoice["items"]), 2)
     invoice["total_amount"] = total
@@ -970,10 +1073,22 @@ def _handle_onboard(sender: str, text: str, state: dict) -> str:
             return T(lang,"cancel_ok") + T(lang,"menu")
         if t.upper() == "CONFIRM":
             send_text(sender, T(lang,"ob_creating"))
+            # 1. Register as customer in DigiTax
             ok, cid, name = register_customer(d)
+            # 2. Save client as pending in our DB
+            save_client(sender, d.get("business_name",""), d.get("kra_pin",""))
+            # 3. Notify team to create DigiTax business + get API key
+            notify_team_new_client(sender, d.get("business_name",""), d.get("kra_pin",""))
             ns = _DEFAULT_STATE(); ns["lang"] = lang; ns["step"] = "menu"
             save_session(sender, ns)
-            return T(lang,"ob_success" if ok else "ob_failed", **({"name":name,"id":cid} if ok else {"err":cid}))
+            if ok:
+                # Tell client they're registered but pending activation
+                if lang == "sw":
+                    pending_msg = ("Umesajiliwa! Timu yetu itakuwezesha ndani ya masaa 24.\n\nUtapata ujumbe utakapokuwa tayari kutuma ankara.")
+                else:
+                    pending_msg = ("Registered! Our team will activate your account within 24 hours.\n\nYou will receive a message when you are ready to send invoices.")
+                return pending_msg
+            return T(lang,"ob_failed", err=cid)
         return "Reply *CONFIRM* or *CANCEL*"
 
     return T(lang,"bad_cmd")
@@ -1012,6 +1127,52 @@ def handle_message(sender: str, text: str, profile: str = "") -> str:
     if tl in ("language","lugha","lang"):
         state["step"] = "new"; state["lang"] = None; save_session(sender,state)
         return STRINGS["en"]["welcome"]
+
+    # ── addclient command (staff only) ─────────────────────────────────────
+    # Format: addclient +254712345678 dgtx_live_xxxxxxxxxx
+    if tl.startswith("addclient ") and sender in STAFF_NUMBERS:
+        parts = t.split()
+        if len(parts) == 3:
+            client_phone = parts[1].strip()
+            api_key      = parts[2].strip()
+            if activate_client(client_phone, api_key):
+                client = get_client(client_phone)
+                biz    = client["business_name"] if client else client_phone
+                # Notify the client they are now live
+                client_state = load_session(client_phone)
+                client_lang  = client_state.get("lang","en")
+                if client_lang == "sw":
+                    lines_sw = ["Hongera! Akaunti yako ya HustleShield imewashwa.", "", "Unaweza sasa kutuma ankara za eTIMS halisi.", "Tuma 1 kuanza."]
+                    client_msg = "\n".join(lines_sw)
+                else:
+                    lines_en = ["You are now LIVE on HustleShield!", "", "Your eTIMS invoices will now show " + biz + " as the seller on KRA.", "Send 1 to create your first invoice."]
+                    client_msg = "\n".join(lines_en)
+                send_text(client_phone, client_msg)
+                logger.info("Client activated | phone=%s | biz=%s", client_phone, biz)
+                return "Client " + biz + " (" + client_phone + ") is now LIVE. They have been notified."
+            else:
+                return "Client not found. Make sure they registered first. Phone: " + client_phone
+        return "Format: addclient +254712345678 dgtx_live_apikey"
+
+    # ── listclients command (staff only) ──────────────────────────────────
+    if tl == "listclients" and sender in STAFF_NUMBERS:
+        try:
+            with get_db() as conn:
+                rows = conn.execute("SELECT phone, business_name, kra_pin, status, created_at FROM clients ORDER BY created_at DESC LIMIT 20").fetchall()
+            if not rows:
+                return "No clients registered yet."
+            lines = ["HustleShield Clients:\n"]
+            for r in rows:
+                status_icon = "LIVE" if r["status"] == "active" else "PENDING"
+                lines.append(status_icon + " " + r["business_name"] + " | " + r["kra_pin"] + " | " + r["phone"])
+            return "\n".join(lines)
+        except Exception as e:
+            return "Error: " + str(e)
+
+    # ── Check if unregistered client trying to invoice ─────────────────────
+    # If someone messages who is not staff and not a registered client,
+    # they need to go through client onboarding first
+    # (Allow access if they have a subscription/wallet — they can use master key)
 
     # ── Active flows take priority ─────────────────────────────────────────
     if state["step"].startswith("inv_") and state["step"] != "sub_menu":
