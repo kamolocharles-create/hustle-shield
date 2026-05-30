@@ -1025,6 +1025,20 @@ def _handle_onboard(sender: str, text: str, state: dict) -> str:
     d    = state.get("data",{})
 
     if step in ("menu","idle") or t.lower() in ("2","sajili","onboard") or t.lower().startswith("register") or t.lower().startswith("sajili "):
+        # Check if sender is already registered
+        existing = get_client(sender)
+        if existing:
+            if existing["status"] == "active":
+                if lang == "sw":
+                    return "Akaunti yako iko tayari! Tuma *1* kutuma ankara."
+                return "Your account is already active! Send *1* to create an invoice."
+            elif existing["status"] == "pending":
+                if lang == "sw":
+                    return ("Umesajiliwa tayari. Timu yetu inafanya kazi kuwezesha akaunti yako.\n\n"
+                            "Utapata ujumbe ukiwa tayari. Subiri tafadhali.")
+                return ("You are already registered and pending activation.\n\n"
+                        "Our team is setting up your account. You will receive a message when ready.")
+
         # One-shot: register <PIN> <name> | <email> | <phone>
         raw = re.sub(r"^(register|sajili)\s+","",t,flags=re.IGNORECASE)
         # Normalize separators: / or | both work
