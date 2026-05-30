@@ -623,6 +623,11 @@ def register_customer(data: dict) -> tuple:
         cid    = result.get("id", "N/A")
         return True, cid, data["business_name"]
     except RuntimeError as e:
+        err = str(e).lower()
+        # Treat "already exists" as success — client is registered, just from a previous attempt
+        if any(phrase in err for phrase in ["already exist", "duplicate", "conflict", "409"]):
+            logger.info("Customer already exists in DigiTax — treating as success: %s", data["business_name"])
+            return True, "existing", data["business_name"]
         return False, str(e), ""
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1087,22 +1092,20 @@ def _handle_onboard(sender: str, text: str, state: dict) -> str:
             return T(lang,"cancel_ok") + T(lang,"menu")
         if t.upper() == "CONFIRM":
             send_text(sender, T(lang,"ob_creating"))
-            # 1. Register as customer in DigiTax
-            ok, cid, name = register_customer(d)
-            # 2. Save client as pending in our DB
+            # 1. Save client as pending in our DB first (before DigiTax call)
             save_client(sender, d.get("business_name",""), d.get("kra_pin",""))
-            # 3. Notify team to create DigiTax business + get API key
+            # 2. Register as customer in DigiTax
+            ok, cid, name = register_customer(d)
+            # 3. Notify team regardless of DigiTax result (client is saved locally)
             notify_team_new_client(sender, d.get("business_name",""), d.get("kra_pin",""))
             ns = _DEFAULT_STATE(); ns["lang"] = lang; ns["step"] = "menu"
             save_session(sender, ns)
-            if ok:
-                # Tell client they're registered but pending activation
-                if lang == "sw":
-                    pending_msg = ("Umesajiliwa! Timu yetu itakuwezesha ndani ya masaa 24.\n\nUtapata ujumbe utakapokuwa tayari kutuma ankara.")
-                else:
-                    pending_msg = ("Registered! Our team will activate your account within 24 hours.\n\nYou will receive a message when you are ready to send invoices.")
-                return pending_msg
-            return T(lang,"ob_failed", err=cid)
+            # Always show success if client saved locally — DigiTax duplicate is fine
+            if lang == "sw":
+                return ("Umesajiliwa! Timu yetu itakuwezesha akaunti yako ndani ya masaa 24.\n\n"
+                        "Utapata ujumbe ukiwa tayari kutuma ankara.")
+            return ("Registered! Our team will activate your account within 24 hours.\n\n"
+                    "You will receive a message when you are ready to send invoices.")
         return "Reply *CONFIRM* or *CANCEL*"
 
     return T(lang,"bad_cmd")
